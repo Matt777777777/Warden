@@ -1,5 +1,7 @@
 # WARDEN build notes
 
+« ## Light sensor baseline (Day 1) » : ambient 737, hand 623, phone torch 975.
+
 ## Sensor orientation in the crate
 
 (Day 4: which face of the crate points along +X, +Y, +Z?)
