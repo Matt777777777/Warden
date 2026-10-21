@@ -23,6 +23,16 @@ Final build started directly instead of a temporary rig. Prototype shield stacke
 
 GY-521 first light: at rest az ≈ 0.93 g instead of 1.00 (factory offset of a low-cost sensor, |a| ≈ 0.93). Harmless for classification; a 6-face calibration could fix it in Week 2.
 
+## Clock, badges and bus (Day 2)
+
+RFID badges: white card 40 8C 7D A2 = AUTH (opens a 30 s window where opening is legitimate), blue key fob 05 24 8E B9 = INSPECTOR (shows the log on the LCD). The RC522 is a clone (version register 0x88 instead of 0x91/0x92), works the same.
+DS3231 clock (ZS-042) added, with its AT24C32 4 KB memory used for the event log. I2C address clash found before wiring: MPU-6050 and DS3231 both default to 0x68. Fixed by tying GY-521 AD0 to 3.3V (sensor moves to 0x69). Bus scan confirms 0x57, 0x68, 0x69.
+ZS-042 trickle-charges its coin cell; ours is a CR2032 (non-rechargeable), so the module runs on 3.3V only.
+
+## Firmware v0.2 (rule-based baseline)
+
+`firmware/warden` runs everything together: 100 Hz streaming (record.py compatible), lid detection with hysteresis, badge roles, DROP / SHOCK / FLIPPED rules, DS3231 timestamps, LCD status, inspector view, and a hash-chained log (CRC-16 per record over the previous chain value) in the AT24C32. `tools/verify_log.py` reads the log over USB and flags any edited or deleted record. Known limit: CRC-16 stops naive edits, not an attacker who knows the algorithm; production would use an HMAC with a key in a secure element.
+
 ## Sensor orientation in the crate
 
 (Day 4: which face of the crate points along +X, +Y, +Z?)

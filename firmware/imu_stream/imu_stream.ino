@@ -15,7 +15,7 @@
 
   Wiring (see docs/wiring_week1.png)
     GY-521 VCC -> 5V      GY-521 GND -> GND
-    GY-521 SDA -> A4      GY-521 SCL -> A5
+    GY-521 SDA -> A4      GY-521 SCL -> A5      GY-521 AD0 -> 3.3V (address 0x69)
     Photoresistor: 5V -> photoresistor -> A0 -> 10k resistor -> GND
 
   No extra library needed: we talk to the sensor directly with Wire (I2C).
@@ -24,7 +24,7 @@
 #include <Wire.h>
 
 // ---------- Settings you may want to change ----------
-const uint8_t MPU_ADDR = 0x68;               // I2C address of the MPU-6050 (AD0 pin low)
+uint8_t MPU_ADDR = 0x69;                     // 0x69 when AD0 is tied to 3.3V (frees 0x68 for the DS3231 clock)
 const uint8_t LIGHT_PIN = A0;                // photoresistor divider output
 const unsigned long SAMPLE_PERIOD_US = 10000; // 10 000 us = 100 samples per second
 
@@ -94,7 +94,11 @@ void setup() {
 
   Serial.println(F("# WARDEN imu_stream v0.1"));
 
-  // 1. Is anybody there? Ask the sensor for its ID.
+  // 1. Is anybody there? The sensor answers at 0x69 (AD0 tied to 3.3V) or 0x68 (AD0 free).
+  Wire.beginTransmission(0x69);
+  if (Wire.endTransmission() != 0) MPU_ADDR = 0x68;
+  Serial.print(F("# MPU-6050 at 0x"));
+  Serial.println(MPU_ADDR, HEX);
   Wire.beginTransmission(MPU_ADDR);
   Wire.write(REG_WHO_AM_I);
   if (Wire.endTransmission(false) != 0) {
