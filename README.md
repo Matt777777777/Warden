@@ -1,60 +1,110 @@
 # WARDEN
 
-**A €50 AI black box that tells you what happened to a weapons crate between the factory and the front line.**
+**A low-cost, tamper-evident black box for military equipment crates.**
 
-Western countries have shipped billions of euros of military equipment to partners, and verifying where it ends up ("end-use monitoring") is a real political problem. Today that verification relies mostly on paperwork, serial-number scans and occasional inspections. WARDEN explores a different idea: a small tamper-evident sensor that rides inside the crate, feels every movement it goes through, and uses a tiny machine-learning model running *on the microcontroller itself* to classify those movements (at rest, carried, in a vehicle, dropped, flipped, tampered with, opened). Authorised openings are signed with an RFID badge; everything else is logged with a timestamp.
+WARDEN rides inside a crate, feels every movement it goes through, knows when the lid is opened and by whom, and keeps a timestamped log that cannot be edited without it showing. An inspector reads the crate's history on its screen or from a phone, and the phone checks the log's integrity on the spot.
 
-The constraint is the point: the whole thing runs on an Arduino UNO R3 with **2 KB of RAM**.
+Built on an Arduino UNO with **2 KB of RAM**, from starter-kit parts, without soldering.
 
-## Status
+<p align="center">
+  <img src="docs/media/app-status.png" width="250" alt="Crate status in the phone app">
+  <img src="docs/media/app-log-verified.png" width="250" alt="Log downloaded and verified">
+  <img src="docs/media/app-log-forged.png" width="250" alt="A forged record is detected">
+</p>
+<p align="center"><sub>Inspector app: live crate status · log downloaded and verified · a forged record detected</sub></p>
 
-| Week | Goal | Status |
-|------|------|--------|
-| 1 | Sensor streaming + labelled dataset | In progress |
-| 2 | Feature engineering, model training, model running on the UNO | Planned |
-| 3 | RFID authorisation, timestamped tamper-evident log, phone readout, enclosure, demo video | Planned |
+## Why
 
-## How it works
+Countries supplying military equipment to partners are expected to verify where it ends up (*end-use monitoring*). In practice this relies on paperwork, serial-number checks and occasional inspections: between two inspections, nobody knows what happened to a crate. WARDEN explores a different answer: let the crate keep its own record, cheaply enough to put one in every box.
 
-```
- GY-521 IMU ──┐                        ┌── RFID badge (authorised opening)
- Light sensor ┼─> features ─> tiny ML ─┼── DS3231 clock (timestamps)
-              │   (on UNO)    model    └── event log ─> LCD / buzzer / phone (BLE)
-```
+## What it does
 
-## Hardware (Week 1)
+| Layer | Function | How |
+|-------|----------|-----|
+| **Sense** | Motion and lid state | MPU-6050 accelerometer + gyroscope at 100 Hz, photoresistor inside the lid |
+| **Think** | Recognise what is happening | Rule-based detection today (drop, shock, flip); on-device machine learning in progress |
+| **Prove** | Who, when, authorised or not | RFID badges, real-time clock, hash-chained event log in non-volatile memory |
+| **Report** | Tell a human | 16×2 LCD on the crate, phone app over Wi-Fi relay or Bluetooth LE |
 
-Elegoo UNO R3, GY-521 (MPU-6050) accelerometer + gyroscope, photoresistor + 10 kΩ resistor, breadboard, jumper wires. Wiring: `docs/wiring_week1.png`.
+![Architecture](docs/media/architecture.png)
 
-## Quick start
+**Events recorded:** power on, authorised badge, inspector badge, unknown badge, lid opened with or without authorisation, lid closed, drop (with impact force), shock, flipped, upright, log cleared.
 
-1. Open `firmware/imu_stream/imu_stream.ino` in the Arduino IDE, select **Arduino Uno**, upload.
-2. Install the Python tools: `pip install -r requirements.txt`
-3. Record a session: `python tools/record.py --label still --seconds 15`
-4. Look at it: `python tools/plot.py --latest`
+**Authorisation model:** the authorised badge allows exactly one lid opening within 30 seconds. Any other opening is logged as an alert. The inspector badge scrolls the most recent events on the crate's screen.
+
+## Tamper-evident log
+
+Each record (time, event, value) is stored with a 16-bit *chain* value computed over the previous chain value and the record itself. Editing, deleting or reordering any record breaks every link after it, the way a page torn out of a numbered, glued logbook leaves a gap. The log lives in the 4 KB AT24C32 memory of the clock module and survives power loss; a reboot is itself recorded.
+
+The chain is verified independently of the crate, by `tools/verify_log.py` on a laptop or inside the phone app.
+
+**Known limitation.** CRC-16 detects accidental damage and naive edits, not an attacker who knows the algorithm and can recompute the chain. A production design would use a keyed MAC (e.g. HMAC-SHA256) with the key held in a secure element (e.g. ATECC608), so that only the crate can produce valid records. This is the first item on the security roadmap.
+
+## Hardware
+
+Arduino UNO R3, prototype shield with a 170-point mini breadboard, GY-521 (MPU-6050), photoresistor, RC522 RFID reader, DS3231 real-time clock with AT24C32 memory, LCD 1602. Bill of materials, pin map and wiring: **[docs/hardware.md](docs/hardware.md)**.
 
 ## Repository layout
 
 ```
-firmware/imu_stream/   Arduino sketch: streams IMU + light at 100 Hz over USB
-tools/record.py        records one labelled session to data/raw/
-tools/plot.py          plots a session
-data/raw/              recorded sessions (CSV) + sessions_log.csv
-docs/                  wiring diagrams, notes, media
+firmware/warden/            main firmware (v0.3)
+firmware/diagnostics/       one-purpose test sketches: I2C scan, motion stream, LCD, RFID
+app/index.html              phone inspector app (single file, no dependencies)
+tools/record.py             record labelled motion sessions for the training dataset
+tools/plot.py               plot a recorded session
+tools/verify_log.py         download the crate's log over USB and verify its integrity
+tools/bridge.py             relay between the crate (USB) and the phone app (Wi-Fi)
+docs/hardware.md            bill of materials, pin map, wiring
+docs/engineering-log.md     dated build log: measurements, decisions, bugs and fixes
+data/raw/                   training dataset (labelled CSV sessions)
 ```
 
-## Event classes
+## Getting started
 
-| Label | Meaning |
-|-------|---------|
-| `still` | crate at rest |
-| `carry` | carried by a person |
-| `vehicle` | transported in a vehicle |
-| `drop` | free fall then impact |
-| `flip` | tilted past 90° / turned upside down |
-| `tamper` | prying, hitting, violent shaking |
-| `open` | lid opened (detected by the light sensor, rule-based) |
+**Firmware.** Open `firmware/warden/warden.ino` in the Arduino IDE, install the *MFRC522* library (Library Manager, by GithubCommunity), select *Arduino Uno* and upload. On first boot the clock is set to the compile time. Over the serial port (115200 baud) the crate accepts `dump`, `clear` and `time YYYY-MM-DD HH:MM:SS`.
 
-## Disclaimer
+**Laptop tools.** Python 3.9+:
 
-Educational, defensive prototype focused on accountability and arms-control verification. Not a certified security device.
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python tools/verify_log.py                      # read and verify the crate's log
+python tools/record.py --label drop --seconds 20
+python tools/plot.py --latest
+```
+
+**Phone app.** Two ways to reach the crate, same app and protocol:
+
+- *Via a Mac (works today):* run `python tools/bridge.py` with the crate on USB, then open the printed address in Safari on an iPhone connected to the same Wi-Fi.
+- *Bluetooth LE (HM-10 module, in progress):* open the [hosted app](https://matt777777777.github.io/Warden/app/) in the Bluefy browser on iPhone (Safari has no Web Bluetooth).
+
+A demo mode simulates a crate, including a forged record, without any hardware.
+
+## Serial protocol
+
+| Direction | Line | Meaning |
+|-----------|------|---------|
+| crate → host | `t_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,light` | 100 Hz sensor stream |
+| crate → host | `#S,<alerts>,<lid>,<auth s>,<unix>` | status, every 2 s |
+| crate → host | `#E <date> <time> <EVENT> [<g>] [ALERT]` | live event |
+| crate → host | `#L,<seq>,<unix>,<datetime>,<event>,<value>,<chain>` | log dump, ends with `#L,END,<count>,<chain>` |
+| host → crate | `dump` · `time YYYY-MM-DD HH:MM:SS` · `clear` | commands (`clear` is not relayed to the phone) |
+
+## Roadmap
+
+- [x] Motion and light sensing, 100 Hz streaming and labelled recording tools
+- [x] Compact solder-free build: clock, RFID, LCD, shared I2C bus
+- [x] Rule-based detection, badge authorisation, hash-chained log, integrity verifier
+- [x] Phone inspector app with Wi-Fi relay and demo mode
+- [ ] Final enclosure (opaque plastic crate) and labelled dataset collection
+- [ ] On-device classifier (features computed on the fly, small decision tree exported to C), benchmarked against the rules
+- [ ] Bluetooth LE link (HM-10) and battery operation
+- [ ] Keyed MAC instead of CRC for the log chain
+
+## Scope
+
+WARDEN is a defensive, educational prototype focused on accountability and arms-control verification. It is not a certified security product.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

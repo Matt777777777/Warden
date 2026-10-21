@@ -1,5 +1,5 @@
 /*
-  WARDEN - Week 1 firmware: stream motion + light data to the laptop
+  WARDEN - diagnostic: stream motion + light data to the laptop (no rules, no log)
   ------------------------------------------------------------------
   What it does
     Reads the GY-521 (MPU-6050) accelerometer/gyroscope and a light sensor
@@ -13,7 +13,7 @@
 
     Lines starting with '#' are messages for humans; the Python tools skip them.
 
-  Wiring (see docs/wiring_week1.png)
+  Wiring (see docs/hardware.md)
     GY-521 VCC -> 5V      GY-521 GND -> GND
     GY-521 SDA -> A4      GY-521 SCL -> A5      GY-521 AD0 -> 3.3V (address 0x69)
     Photoresistor: 5V -> photoresistor -> A0 -> 10k resistor -> GND

@@ -8,7 +8,7 @@ const uint8_t RFID_SS  = 10;   // RC522 pin "SDA"
 const uint8_t RFID_RST = 9;    // RC522 pin "RST"
 
 MFRC522 rfid(RFID_SS, RFID_RST);
-LiquidCrystal lcd(4, 5, 6, 7, 8, A1);   // RS, E, D4, D5, D6, D7 (see docs/pinmap.md)
+LiquidCrystal lcd(4, 5, 6, 7, 8, A1);   // RS, E, D4, D5, D6, D7 (see docs/hardware.md)
 
 void showWaiting() {
   lcd.clear();

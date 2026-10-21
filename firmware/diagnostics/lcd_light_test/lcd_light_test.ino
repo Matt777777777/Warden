@@ -1,7 +1,7 @@
 // WARDEN - LCD test: show the light level and the lid state on the screen
 #include <LiquidCrystal.h>   // comes with the Arduino IDE, nothing to install
 
-// LCD pins in this order: RS, E, D4, D5, D6, D7  (see docs/pinmap.md)
+// LCD pins in this order: RS, E, D4, D5, D6, D7  (see docs/hardware.md)
 LiquidCrystal lcd(4, 5, 6, 7, 8, A1);
 
 const int LIGHT_PIN = A0;

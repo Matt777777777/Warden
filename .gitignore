@@ -1,4 +1,10 @@
 __pycache__/
+*.pyc
 .venv/
 .DS_Store
-*.pyc
+
+# Throw-away test recordings (real training data goes in data/raw)
+data/test/
+
+# Arduino IDE build output
+build/

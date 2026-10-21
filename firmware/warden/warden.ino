@@ -5,7 +5,7 @@
     SENSE   GY-521 motion sensor + photoresistor, sampled 100 times per second,
             streamed to the laptop in the same CSV format as imu_stream
             (so tools/record.py keeps working for dataset collection).
-    THINK   Hand-written rules (the baseline the AI will have to beat in Week 2):
+    THINK   Hand-written rules (the baseline the machine-learning model will have to beat):
             DROP    free fall (|a| < 0.35 g for 60 ms) followed by an impact > 2 g
             SHOCK   violent hit > 3 g without a free fall (knock, blow, forced entry)
             FLIPPED crate upside down for more than 1 s
@@ -25,7 +25,7 @@
     time YYYY-MM-DD HH:MM:SS      set the clock
 
   Libraries: Wire, SPI, LiquidCrystal (built in) + MFRC522 (Library Manager).
-  Pin map: docs/pinmap.md
+  Pin map: docs/hardware.md
 */
 
 #include <Wire.h>
