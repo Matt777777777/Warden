@@ -1,5 +1,5 @@
 /*
-  WARDEN firmware v0.2 - the AI black box for arms shipments (rule-based edition)
+  WARDEN firmware v0.3 - the AI black box for arms shipments (rule-based edition)
   ===========================================================================
   What runs here, all at once:
     SENSE   GY-521 motion sensor + photoresistor, sampled 100 times per second,
@@ -16,6 +16,8 @@
             carries a fingerprint of the previous one, so deleting or editing a
             record breaks the chain and shows (tools/verify_log.py).
     REPORT  16x2 LCD: status, time, last event, authorisation countdown.
+
+  Status line every 2 s for the phone app: #S,<alerts>,<lid>,<auth s left>,<unix>
 
   Serial commands (115200 baud, end with Enter):
     dump                          print the whole log
@@ -546,6 +548,15 @@ void updateScreen() {
   lcdLine(1, l2.s);
 }
 
+// Status line for the phone app, every 2 s: #S,<alerts>,<lid 0|1>,<auth seconds left>,<unix time>
+void sendStatus() {
+  Serial.print(F("#S,"));
+  Serial.print(alertCount); Serial.print(',');
+  Serial.print(lidOpen ? 1 : 0); Serial.print(',');
+  Serial.print(authActive() ? (authUntil - millis()) / 1000 + 1 : 0); Serial.print(',');
+  Serial.println(nowUnix());
+}
+
 // ------------------------------------------------------------------ serial commands
 char cmd[28];
 uint8_t cmdLen = 0;
@@ -579,7 +590,7 @@ void readSerial() {
 
 // ------------------------------------------------------------------ setup & loop
 unsigned long nextSampleUs = 0;
-unsigned long nextBadgeCheck = 0, nextScreen = 0, nextRtcSync = 0;
+unsigned long nextBadgeCheck = 0, nextScreen = 0, nextRtcSync = 0, nextStatus = 0;
 
 void halt(const __FlashStringHelper *line1, const __FlashStringHelper *msg) {
   lcd.clear(); lcd.print(line1);
@@ -590,10 +601,10 @@ void halt(const __FlashStringHelper *line1, const __FlashStringHelper *msg) {
 void setup() {
   Serial.begin(115200);
   lcd.begin(16, 2);
-  lcd.print(F("WARDEN v0.2"));
+  lcd.print(F("WARDEN v0.3"));
   lcd.setCursor(0, 1);
   lcd.print(F("starting..."));
-  Serial.println(F("# WARDEN firmware v0.2"));
+  Serial.println(F("# WARDEN firmware v0.3"));
 
   Wire.begin();
   Wire.setClock(400000);
@@ -679,4 +690,5 @@ void loop() {
   if ((long)(now - nextBadgeCheck) >= 0) { nextBadgeCheck = now + 300; checkBadge(); }
   else if ((long)(now - nextScreen) >= 0) { nextScreen = now + 250; updateScreen(); }
   else if ((long)(now - nextRtcSync) >= 0) { nextRtcSync = now + 10000; rtcSync(); }
+  else if ((long)(now - nextStatus) >= 0) { nextStatus = now + 2000; sendStatus(); }
 }

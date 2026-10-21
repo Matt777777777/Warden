@@ -152,6 +152,9 @@
 "use strict";
 /* =====================================================================
    WARDEN Inspector - talks to the crate over Bluetooth LE (HM-10 module)
+   Two transports, same protocol:
+     - Bluetooth LE via the crate's HM-10 module (open the page in Bluefy on iPhone)
+     - "Via Mac": tools/bridge.py relays the crate's USB link over Wi-Fi (works in Safari)
    Protocol (text lines, '\n' terminated), same as the USB serial output:
      crate -> phone  #S,<alerts>,<lid 0|1>,<auth seconds left>,<unix>   status, every 2 s
                      #E YYYY-MM-DD HH:MM:SS <EVENT> [x.xg] [ALERT]       live event
@@ -181,7 +184,7 @@ const EVENTS = {                       // firmware code -> [code, readable label
 const $ = (id) => document.getElementById(id);
 const state = { link: "off", alerts: null, lid: null, authLeft: 0, authMax: 30, crateUnix: null, crateAt: 0,
                 last: null, live: [], dump: null, collecting: null };
-let device = null, characteristic = null, rxBuffer = "", demo = null;
+let device = null, characteristic = null, rxBuffer = "", demo = null, events = null, bridgeAvailable = false;
 
 /* ---------------- helpers ---------------- */
 function fmtTime(unix) {
@@ -230,16 +233,18 @@ function render() {
   $("authSecs").textContent = state.authLeft;
   $("authBar").style.width = Math.max(0, state.authLeft / state.authMax * 100) + "%";
 
-  $("pill").className = "pill" + (state.link === "ble" ? " on" : state.link === "demo" ? " demo" : "");
-  $("pillText").textContent = state.link === "ble" ? (device && device.name || "Connected") : state.link === "demo" ? "Demo crate" : "Offline";
-  $("btnConnect").textContent = state.link === "ble" ? "Disconnect" : "Connect to crate";
+  const live = state.link === "ble" || state.link === "bridge";
+  $("pill").className = "pill" + (live ? " on" : state.link === "demo" ? " demo" : "");
+  $("pillText").textContent = state.link === "ble" ? (device && device.name || "Connected")
+    : state.link === "bridge" ? "Via Mac" : state.link === "demo" ? "Demo crate" : bridgeAvailable ? "Mac relay ready" : "Offline";
+  $("btnConnect").textContent = live ? "Disconnect" : bridgeAvailable ? "Connect to crate (via Mac)" : "Connect to crate";
   $("btnConnect").disabled = state.link === "demo";
   $("btnDemo").textContent = state.link === "demo" ? "Stop demo" : "Demo mode";
-  $("btnDemo").disabled = state.link === "ble";
+  $("btnDemo").disabled = live;
   for (const id of ["btnLog", "btnSync"]) $(id).disabled = !linked;
   $("btnExport").disabled = !state.dump;
   $("btnTamper").hidden = !(state.link === "demo" && state.dump);
-  $("hint").hidden = linked;
+  $("hint").hidden = linked || bridgeAvailable;
 
   const ul = $("liveList");
   ul.innerHTML = state.live.slice(0, 60).map((ev) =>
@@ -279,9 +284,11 @@ function handleLine(line) {
     const def = EVENTS[m[3]] || [0, m[3], !!m[5]];
     const ev = { time: m[2].slice(0, 5), label: def[1], short: m[3], extra: m[4] || "", alert: def[2] };
     state.live.unshift(ev); state.last = ev;
-    if (ev.alert && state.alerts !== null && state.link === "ble") state.alerts++;  // until next #S
+    if (ev.alert && state.alerts !== null && (state.link === "ble" || state.link === "bridge")) state.alerts++;  // until next #S
     if (navigator.vibrate && ev.alert) navigator.vibrate(120);
     render();
+  } else if (line.startsWith("#X,")) {
+    toast("The crate was unplugged from the Mac");
   } else if (line.startsWith("#L,")) {
     const p = line.split(",");
     if (p[1] === "seq") { state.collecting = []; return; }
@@ -315,6 +322,25 @@ function finishDump(rows, count, lastChain) {
   toast(ok ? `Log verified: ${records.length} records, integrity OK` : "Integrity check FAILED");
 }
 
+/* ---------------- Mac relay (tools/bridge.py) ---------------- */
+function connectBridge() {
+  events = new EventSource("/events");                 // a live stream of the crate's messages
+  events.onopen = () => {
+    if (state.link !== "bridge") {
+      state.link = "bridge"; state.alerts = null; state.live = [];
+      render(); toast("Connected to the crate through the Mac");
+    }
+  };
+  events.onmessage = (e) => handleLine(e.data);
+  events.onerror = () => {
+    if (events && events.readyState === EventSource.CLOSED) { state.link = "off"; render(); toast("Mac relay stopped"); }
+  };
+}
+fetch("/bridge-info", { cache: "no-store" })            // are we being served by tools/bridge.py?
+  .then((r) => (r.ok ? r.json() : null))
+  .then((j) => { if (j && j.bridge === "warden") { bridgeAvailable = true; render(); } })
+  .catch(() => {});
+
 /* ---------------- Bluetooth ---------------- */
 async function connectBle() {
   if (!navigator.bluetooth) {
@@ -346,6 +372,10 @@ function onDisconnected() {
 }
 async function send(text) {
   if (state.link === "demo") { demo.receive(text.trim()); return; }
+  if (state.link === "bridge") {
+    fetch("/cmd", { method: "POST", body: text.trim() }).catch(() => toast("Mac relay not reachable"));
+    return;
+  }
   if (!characteristic) return;
   const data = new TextEncoder().encode(text);
   for (let i = 0; i < data.length; i += 20) {          // BLE packets carry 20 bytes
@@ -417,6 +447,8 @@ function showTab(name) {
 
 $("btnConnect").onclick = async () => {
   if (state.link === "ble") { device && device.gatt.disconnect(); return; }
+  if (state.link === "bridge") { events.close(); events = null; state.link = "off"; render(); return; }
+  if (bridgeAvailable) { connectBridge(); return; }
   await connectBle();
 };
 $("btnDemo").onclick = () => {
