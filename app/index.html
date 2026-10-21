@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d1012">
+<title>WARDEN Inspector</title>
+<style>
+  :root {
+    --bg: #0d1012; --surface: #151a1d; --surface-2: #1c2226; --line: #262e33;
+    --text: #e7eaec; --muted: #8b959b; --faint: #5c666c;
+    --ok: #3fb950; --ok-bg: rgba(63,185,80,.10);
+    --alert: #f85149; --alert-bg: rgba(248,81,73,.10);
+    --warn: #d29922; --warn-bg: rgba(210,153,34,.12);
+    --accent: #e7eaec;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f6; --surface: #ffffff; --surface-2: #f0f2f3; --line: #dde1e4;
+      --text: #14181b; --muted: #5d676d; --faint: #9aa3a8;
+      --ok: #1a7f37; --ok-bg: rgba(26,127,55,.08);
+      --alert: #cf222e; --alert-bg: rgba(207,34,46,.08);
+      --warn: #9a6700; --warn-bg: rgba(154,103,0,.10);
+      --accent: #14181b; color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: var(--bg); color: var(--text); font: 15px/1.45 var(--sans);
+    padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));
+    max-width: 560px; margin: 0 auto; min-height: 100vh;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0 14px; }
+  .brand { font-weight: 700; letter-spacing: .32em; font-size: 15px; }
+  .brand small { display: block; font-weight: 500; letter-spacing: .08em; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .pill { font: 12px var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; }
+  .pill.on i { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-bg); }
+  .pill.demo i { background: var(--warn); }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 12px; }
+  .status { position: relative; overflow: hidden; }
+  .status .label { font: 12px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+  .status .state { font-size: 40px; font-weight: 700; letter-spacing: .04em; margin: 4px 0 2px; line-height: 1.1; }
+  .status.ok .state { color: var(--ok); }
+  .status.alert .state { color: var(--alert); }
+  .status.idle .state { color: var(--faint); }
+  .status .sub { color: var(--muted); font-size: 14px; }
+  .status .clock { position: absolute; top: 18px; right: 18px; font: 13px var(--mono); color: var(--muted); text-align: right; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .meta div { font: 12px var(--mono); color: var(--muted); }
+  .meta b { display: block; font: 600 15px var(--sans); color: var(--text); margin-top: 2px; }
+  .auth { display: none; margin-top: 14px; font: 13px var(--mono); color: var(--warn); }
+  .auth.show { display: block; }
+  .auth .bar { height: 3px; background: var(--warn-bg); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+  .auth .bar span { display: block; height: 100%; background: var(--warn); width: 100%; transition: width 1s linear; }
+
+  .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+  button {
+    font: 600 14px var(--sans); color: var(--text); background: var(--surface); border: 1px solid var(--line);
+    border-radius: 11px; padding: 13px 12px; min-height: 46px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  button:active { background: var(--surface-2); }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); grid-column: 1 / -1; }
+  button:disabled { opacity: .38; cursor: default; }
+  button.link { background: none; border: none; color: var(--muted); font-weight: 500; font-size: 13px; padding: 6px 0; min-height: 0; text-decoration: underline; text-underline-offset: 3px; }
+
+  .tabs { display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; padding: 4px; margin-bottom: 10px; }
+  .tabs button { flex: 1; border: none; background: none; min-height: 36px; padding: 8px; font-size: 13px; color: var(--muted); border-radius: 8px; }
+  .tabs button.active { background: var(--surface-2); color: var(--text); }
+
+  .list { list-style: none; }
+  .list li { display: grid; grid-template-columns: 54px 1fr auto; gap: 10px; align-items: baseline; padding: 11px 2px; border-bottom: 1px solid var(--line); }
+  .list li:last-child { border-bottom: none; }
+  .list .t { font: 12px var(--mono); color: var(--muted); }
+  .list .e { font-size: 14px; }
+  .list .e small { display: block; font: 11px var(--mono); color: var(--faint); margin-top: 1px; }
+  .list .v { font: 12px var(--mono); color: var(--muted); text-align: right; }
+  .list li.alert .e { color: var(--alert); font-weight: 600; }
+  .list li.broken { background: var(--alert-bg); border-radius: 6px; }
+  .empty { color: var(--faint); font-size: 14px; text-align: center; padding: 28px 0; }
+
+  .verdict { border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; font-size: 14px; display: none; }
+  .verdict.show { display: block; }
+  .verdict b { display: block; font: 700 13px var(--mono); letter-spacing: .06em; margin-bottom: 2px; }
+  .verdict.ok { background: var(--ok-bg); color: var(--ok); }
+  .verdict.bad { background: var(--alert-bg); color: var(--alert); }
+  .verdict span { color: var(--text); opacity: .8; }
+
+  .hint { color: var(--faint); font-size: 12px; text-align: center; margin-top: 18px; line-height: 1.5; }
+  .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
+    background: var(--text); color: var(--bg); font-size: 13px; padding: 10px 14px; border-radius: 10px; opacity: 0;
+    transition: .25s; pointer-events: none; max-width: calc(100% - 32px); }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">WARDEN<small>Crate inspector</small></div>
+  <div class="pill" id="pill"><i></i><span id="pillText">Offline</span></div>
+</header>
+
+<section class="card status idle" id="statusCard">
+  <div class="label">Crate status</div>
+  <div class="state" id="state">NO LINK</div>
+  <div class="sub" id="stateSub">Connect to a crate to read its status.</div>
+  <div class="clock" id="clock">--:--:--<br>crate clock</div>
+  <div class="auth" id="auth">Authorised opening window: <span id="authSecs">30</span> s
+    <div class="bar"><span id="authBar"></span></div></div>
+  <div class="meta">
+    <div>Alerts<b id="mAlerts">–</b></div>
+    <div>Lid<b id="mLid">–</b></div>
+    <div>Last event<b id="mLast">–</b></div>
+  </div>
+</section>
+
+<div class="actions">
+  <button class="primary" id="btnConnect">Connect to crate</button>
+  <button id="btnLog" disabled>Read &amp; verify log</button>
+  <button id="btnSync" disabled>Sync crate clock</button>
+  <button id="btnExport" disabled>Export log (CSV)</button>
+  <button id="btnDemo">Demo mode</button>
+</div>
+
+<div class="tabs">
+  <button class="active" data-tab="live">Live events</button>
+  <button data-tab="log">Stored log</button>
+</div>
+
+<section class="card" id="tab-live">
+  <ul class="list" id="liveList"></ul>
+  <div class="empty" id="liveEmpty">No events yet.</div>
+</section>
+
+<section class="card" id="tab-log" hidden>
+  <div class="verdict" id="verdict"></div>
+  <ul class="list" id="logList"></ul>
+  <div class="empty" id="logEmpty">Tap “Read &amp; verify log” to download the crate’s black box.</div>
+  <button class="link" id="btnTamper" hidden>Demo: tamper with one record, then verify again</button>
+</section>
+
+<p class="hint" id="hint">On iPhone, open this page in the free <b>Bluefy</b> browser (Safari has no Bluetooth access).</p>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   WARDEN Inspector - talks to the crate over Bluetooth LE (HM-10 module)
+   Protocol (text lines, '\n' terminated), same as the USB serial output:
+     crate -> phone  #S,<alerts>,<lid 0|1>,<auth seconds left>,<unix>   status, every 2 s
+                     #E YYYY-MM-DD HH:MM:SS <EVENT> [x.xg] [ALERT]       live event
+                     #L,seq,unix,datetime,event,value,chain              log dump line
+                     #L,END,<count>,<chain>                              end of dump
+     phone -> crate  dump  |  time YYYY-MM-DD HH:MM:SS
+   Times are the crate's local clock, stored as "unix" seconds: always shown in UTC
+   formatting so the crate's own wall-clock time is displayed unchanged.
+   ===================================================================== */
+
+const HM10_SERVICE = 0xffe0, HM10_CHAR = 0xffe1;
+const EVENTS = {                       // firmware code -> [code, readable label, alert?]
+  "BOOT":    [1,  "Power on", false],
+  "OPEN OK": [2,  "Lid opened (authorised)", false],
+  "OPEN !!": [3,  "Lid opened without badge", true],
+  "CLOSED":  [4,  "Lid closed", false],
+  "DROP":    [5,  "Drop", true],
+  "SHOCK":   [6,  "Shock", true],
+  "FLIPPED": [7,  "Turned upside down", true],
+  "UPRIGHT": [8,  "Back upright", false],
+  "AUTH":    [9,  "Authorised badge", false],
+  "INSPECT": [10, "Inspector badge", false],
+  "BADGE ?": [11, "Unknown badge", true],
+  "CLEARED": [12, "Log cleared", false],
+};
+
+const $ = (id) => document.getElementById(id);
+const state = { link: "off", alerts: null, lid: null, authLeft: 0, authMax: 30, crateUnix: null, crateAt: 0,
+                last: null, live: [], dump: null, collecting: null };
+let device = null, characteristic = null, rxBuffer = "", demo = null;
+
+/* ---------------- helpers ---------------- */
+function fmtTime(unix) {
+  return new Date(unix * 1000).toISOString().slice(11, 19);
+}
+function fmtDate(unix) {
+  const d = new Date(unix * 1000).toISOString();
+  return d.slice(8, 10) + "/" + d.slice(5, 7);
+}
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+function crc16(crc, bytes) {           // CRC-16/CCITT, identical to the firmware
+  for (const b of bytes) {
+    crc ^= b << 8;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc;
+}
+function recordBytes(unix, name, value) {
+  const code = (EVENTS[name] || [0])[0];
+  return [unix & 255, (unix >>> 8) & 255, (unix >>> 16) & 255, (unix >>> 24) & 255, code, value & 255];
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+/* ---------------- rendering ---------------- */
+function render() {
+  const card = $("statusCard");
+  const linked = state.link !== "off";
+  card.className = "card status " + (!linked || state.alerts === null ? "idle" : state.alerts > 0 ? "alert" : "ok");
+  $("state").textContent = !linked ? "NO LINK" : state.alerts === null ? "…" : state.alerts > 0 ? "ALERT" : "SEALED";
+  $("stateSub").textContent = !linked ? "Connect to a crate to read its status."
+    : state.alerts === null ? "Waiting for the crate…"
+    : state.alerts > 0 ? `${state.alerts} alert${state.alerts > 1 ? "s" : ""} recorded since the log was last cleared.`
+    : "No incident recorded. Seal intact.";
+  $("mAlerts").textContent = state.alerts === null ? "–" : state.alerts;
+  $("mLid").textContent = state.lid === null ? "–" : state.lid ? "Open" : "Closed";
+  $("mLast").textContent = state.last ? state.last.short : "–";
+
+  const now = state.crateUnix === null ? null : state.crateUnix + Math.floor((Date.now() - state.crateAt) / 1000);
+  $("clock").innerHTML = (now === null ? "--:--:--" : fmtTime(now)) + "<br>crate clock";
+
+  const auth = $("auth");
+  auth.classList.toggle("show", linked && state.authLeft > 0);
+  $("authSecs").textContent = state.authLeft;
+  $("authBar").style.width = Math.max(0, state.authLeft / state.authMax * 100) + "%";
+
+  $("pill").className = "pill" + (state.link === "ble" ? " on" : state.link === "demo" ? " demo" : "");
+  $("pillText").textContent = state.link === "ble" ? (device && device.name || "Connected") : state.link === "demo" ? "Demo crate" : "Offline";
+  $("btnConnect").textContent = state.link === "ble" ? "Disconnect" : "Connect to crate";
+  $("btnConnect").disabled = state.link === "demo";
+  $("btnDemo").textContent = state.link === "demo" ? "Stop demo" : "Demo mode";
+  $("btnDemo").disabled = state.link === "ble";
+  for (const id of ["btnLog", "btnSync"]) $(id).disabled = !linked;
+  $("btnExport").disabled = !state.dump;
+  $("btnTamper").hidden = !(state.link === "demo" && state.dump);
+  $("hint").hidden = linked;
+
+  const ul = $("liveList");
+  ul.innerHTML = state.live.slice(0, 60).map((ev) =>
+    `<li class="${ev.alert ? "alert" : ""}"><span class="t">${esc(ev.time)}</span>` +
+    `<span class="e">${esc(ev.label)}</span><span class="v">${esc(ev.extra)}</span></li>`).join("");
+  $("liveEmpty").hidden = state.live.length > 0;
+}
+
+function renderLog() {
+  const d = state.dump, v = $("verdict");
+  $("logEmpty").hidden = !!d;
+  if (!d) { $("logList").innerHTML = ""; v.className = "verdict"; return; }
+  v.className = "verdict show " + (d.ok ? "ok" : "bad");
+  v.innerHTML = d.ok
+    ? `<b>INTEGRITY OK</b><span>${d.records.length} records, chain unbroken. ${d.alerts} alert(s).</span>`
+    : `<b>INTEGRITY FAILED</b><span>The log was modified or damaged. Broken link at record #${d.firstBroken}.</span>`;
+  $("logList").innerHTML = d.records.slice().reverse().map((r) =>
+    `<li class="${r.alert ? "alert" : ""} ${r.status === "broken" ? "broken" : ""}">` +
+    `<span class="t">${esc(fmtDate(r.unix))}<br>${esc(fmtTime(r.unix).slice(0, 5))}</span>` +
+    `<span class="e">${esc(r.label)}<small>#${r.seq} · ${r.status === "broken" ? "BROKEN LINK" : r.status === "start" ? "chain start" : "linked " + r.chain.toString(16).toUpperCase().padStart(4, "0")}</small></span>` +
+    `<span class="v">${esc(r.extra)}</span></li>`).join("");
+}
+
+/* ---------------- protocol parsing ---------------- */
+function handleLine(line) {
+  line = line.trim();
+  if (!line.startsWith("#")) return;                 // raw sensor data lines are ignored here
+  if (line.startsWith("#S,")) {
+    const [, alerts, lid, auth, unix] = line.split(",");
+    state.alerts = +alerts; state.lid = lid === "1";
+    if (+auth > 0 && state.authLeft === 0) state.authMax = Math.max(+auth, 1);
+    state.authLeft = +auth; state.crateUnix = +unix; state.crateAt = Date.now();
+    render();
+  } else if (line.startsWith("#E ")) {
+    const m = line.match(/^#E (\d{4}-\d\d-\d\d) (\d\d:\d\d:\d\d) (.+?)(?: ([\d.]+g))?( ALERT)?$/);
+    if (!m) return;
+    const def = EVENTS[m[3]] || [0, m[3], !!m[5]];
+    const ev = { time: m[2].slice(0, 5), label: def[1], short: m[3], extra: m[4] || "", alert: def[2] };
+    state.live.unshift(ev); state.last = ev;
+    if (ev.alert && state.alerts !== null && state.link === "ble") state.alerts++;  // until next #S
+    if (navigator.vibrate && ev.alert) navigator.vibrate(120);
+    render();
+  } else if (line.startsWith("#L,")) {
+    const p = line.split(",");
+    if (p[1] === "seq") { state.collecting = []; return; }
+    if (!state.collecting) state.collecting = [];
+    if (p[1] === "END") { finishDump(state.collecting, +p[2], parseInt(p[3], 16)); state.collecting = null; return; }
+    state.collecting.push({ seq: +p[1], unix: +p[2], name: p[4], value: +p[5], chain: parseInt(p[6], 16) });
+  }
+}
+
+function finishDump(rows, count, lastChain) {
+  let prev = rows.length && rows[0].seq === 0 ? 0xffff : null;
+  let ok = true, firstBroken = null, alerts = 0;
+  const records = rows.map((r, i) => {
+    const def = EVENTS[r.name] || [0, r.name, false];
+    let status = "ok";
+    if (prev === null) status = "start";
+    else if (crc16(prev, recordBytes(r.unix, r.name, r.value)) !== r.chain) status = "broken";
+    if (i > 0 && r.seq !== rows[i - 1].seq + 1) status = "broken";
+    if (status === "broken") { ok = false; if (firstBroken === null) firstBroken = r.seq; }
+    if (def[2]) alerts++;
+    prev = r.chain;
+    return { ...r, label: def[1], alert: def[2], status,
+             extra: (r.name === "DROP" || r.name === "SHOCK") ? (r.value / 10).toFixed(1) + " g" : "" };
+  });
+  if (rows.length && (count !== rows[rows.length - 1].seq + 1 || lastChain !== rows[rows.length - 1].chain)) {
+    ok = false; if (firstBroken === null) firstBroken = count - 1;
+  }
+  state.dump = { records, ok, firstBroken, alerts, rows };
+  renderLog(); render();
+  showTab("log");
+  toast(ok ? `Log verified: ${records.length} records, integrity OK` : "Integrity check FAILED");
+}
+
+/* ---------------- Bluetooth ---------------- */
+async function connectBle() {
+  if (!navigator.bluetooth) {
+    toast("No Bluetooth here. On iPhone, open this page in the Bluefy app.");
+    return;
+  }
+  try {
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [HM10_SERVICE] });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(HM10_SERVICE);
+    characteristic = await service.getCharacteristic(HM10_CHAR);
+    characteristic.addEventListener("characteristicvaluechanged", (e) => {
+      rxBuffer += new TextDecoder().decode(e.target.value);
+      let i;
+      while ((i = rxBuffer.indexOf("\n")) >= 0) { handleLine(rxBuffer.slice(0, i)); rxBuffer = rxBuffer.slice(i + 1); }
+      if (rxBuffer.length > 512) rxBuffer = rxBuffer.slice(-512);
+    });
+    await characteristic.startNotifications();
+    state.link = "ble"; state.alerts = null; state.live = [];
+    render();
+    toast("Connected to " + (device.name || "crate"));
+  } catch (err) {
+    if (err && err.name !== "NotFoundError") toast("Connection failed: " + (err.message || err));
+  }
+}
+function onDisconnected() {
+  state.link = "off"; characteristic = null; render(); toast("Crate disconnected");
+}
+async function send(text) {
+  if (state.link === "demo") { demo.receive(text.trim()); return; }
+  if (!characteristic) return;
+  const data = new TextEncoder().encode(text);
+  for (let i = 0; i < data.length; i += 20) {          // BLE packets carry 20 bytes
+    const chunk = data.slice(i, i + 20);
+    if (characteristic.writeValueWithoutResponse) await characteristic.writeValueWithoutResponse(chunk);
+    else await characteristic.writeValue(chunk);
+    await new Promise((r) => setTimeout(r, 30));
+  }
+}
+
+/* ---------------- demo crate (works without hardware) ---------------- */
+class DemoCrate {
+  constructor() {
+    const base = Math.floor(Date.now() / 1000) - new Date().getTimezoneOffset() * 60 - 3600 * 5;
+    this.log = []; this.chain = 0xffff; this.alerts = 0; this.lid = false; this.authUntil = 0;
+    this.offset = 0;
+    [[0, "BOOT", 0], [620, "AUTH", 0], [628, "OPEN OK", 188], [910, "CLOSED", 9],
+     [5400, "DROP", 34], [9000, "SHOCK", 41], [12100, "OPEN !!", 181], [12300, "CLOSED", 11]]
+      .forEach(([dt, n, v]) => this.add(base + dt, n, v, false));
+    this.timers = [setInterval(() => this.status(), 2000), setInterval(() => this.randomEvent(), 7000)];
+    setTimeout(() => this.status(), 300);
+  }
+  now() { return Math.floor(Date.now() / 1000) - new Date().getTimezoneOffset() * 60 + this.offset; }
+  add(unix, name, value, live = true) {
+    this.chain = crc16(this.chain, recordBytes(unix, name, value));
+    this.log.push({ seq: this.log.length, unix, name, value, chain: this.chain });
+    if (EVENTS[name][2]) this.alerts++;
+    if (live) {
+      const dt = new Date(unix * 1000).toISOString().replace("T", " ").slice(0, 19);
+      const g = (name === "DROP" || name === "SHOCK") ? " " + (value / 10).toFixed(1) + "g" : "";
+      handleLine(`#E ${dt} ${name}${g}${EVENTS[name][2] ? " ALERT" : ""}`);
+    }
+  }
+  status() {
+    const left = Math.max(0, Math.ceil((this.authUntil - Date.now()) / 1000));
+    handleLine(`#S,${this.alerts},${this.lid ? 1 : 0},${left},${this.now()}`);
+  }
+  randomEvent() {
+    const script = [["AUTH", 0], ["OPEN OK", 190], ["CLOSED", 8], ["SHOCK", 33], ["INSPECT", 0], ["DROP", 27]];
+    const [name, v] = script[(this.step = ((this.step ?? -1) + 1) % script.length)];
+    if (name === "AUTH") this.authUntil = Date.now() + 30000;
+    if (name === "OPEN OK") { this.lid = true; this.authUntil = 0; }
+    if (name === "CLOSED") this.lid = false;
+    this.add(this.now(), name, v);
+    this.status();
+  }
+  receive(cmd) {
+    if (cmd === "dump") {
+      setTimeout(() => {
+        handleLine("#L,seq,unix,datetime,event,value,chain");
+        for (const r of this.log) handleLine(`#L,${r.seq},${r.unix},-,${r.name},${r.value},${r.chain.toString(16).toUpperCase()}`);
+        handleLine(`#L,END,${this.log.length},${this.chain.toString(16).toUpperCase()}`);
+      }, 500);
+    } else if (cmd.startsWith("time ")) {
+      const t = cmd.slice(5).replace(" ", "T") + "Z";
+      this.offset += Math.floor(Date.parse(t) / 1000) - this.now();
+      setTimeout(() => this.status(), 200);
+    }
+  }
+  stop() { this.timers.forEach(clearInterval); }
+}
+
+/* ---------------- actions ---------------- */
+function showTab(name) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  $("tab-live").hidden = name !== "live";
+  $("tab-log").hidden = name !== "log";
+}
+
+$("btnConnect").onclick = async () => {
+  if (state.link === "ble") { device && device.gatt.disconnect(); return; }
+  await connectBle();
+};
+$("btnDemo").onclick = () => {
+  if (state.link === "demo") {
+    demo.stop(); demo = null;
+    Object.assign(state, { link: "off", alerts: null, lid: null, authLeft: 0, crateUnix: null, last: null, live: [], dump: null });
+    renderLog(); render(); return;
+  }
+  Object.assign(state, { link: "demo", alerts: null, live: [], dump: null });
+  renderLog(); render();
+  demo = new DemoCrate();
+  toast("Demo crate: simulated events every few seconds");
+};
+$("btnLog").onclick = () => { toast("Reading the black box…"); send("dump\n"); };
+$("btnSync").onclick = () => {
+  const d = new Date(), p = (n) => String(n).padStart(2, "0");
+  const t = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  send(`time ${t}\n`); toast("Crate clock set to " + t.slice(11));
+};
+$("btnExport").onclick = () => {
+  const d = state.dump; if (!d) return;
+  const lines = ["seq,datetime,event,value,chain,check"].concat(d.records.map((r) =>
+    [r.seq, new Date(r.unix * 1000).toISOString().replace("T", " ").slice(0, 19), r.name, r.value,
+     r.chain.toString(16).toUpperCase().padStart(4, "0"), r.status].join(",")));
+  lines.push(`# integrity,${d.ok ? "OK" : "FAILED"}`);
+  const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `warden_log_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+$("btnTamper").onclick = () => {
+  // Rewrite a DROP as a harmless CLOSED, as a forger would, keeping its stored fingerprint.
+  const victim = demo.log.find((r) => r.name === "DROP");
+  if (!victim) return;
+  victim.name = "CLOSED";
+  toast("Record #" + victim.seq + " forged (DROP rewritten as CLOSED). Verifying…");
+  setTimeout(() => send("dump\n"), 900);
+};
+document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => showTab(b.dataset.tab));
+setInterval(() => {                                    // smooth countdown + clock between status lines
+  if (state.authLeft > 0 && state.link !== "off") state.authLeft = Math.max(0, state.authLeft - 1);
+  render();
+}, 1000);
+render(); renderLog();
+</script>
+</body>
+</html>
