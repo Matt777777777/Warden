@@ -17,6 +17,12 @@ Lid threshold set to 400: a closed crate (~40) and an open one (~737) sit far on
 
 LCD 1602 working in 4-bit mode, shows the light level and LID: OPEN / CLOSED in real time (`firmware/lcd_light_test`). Wiring in `docs/pinmap.md`.
 
+## Compact core (Day 2)
+
+Final build started directly instead of a temporary rig. Prototype shield stacked on the UNO, 170-point mini breadboard stuck on the shield: GY-521 (pins in column e, rows 1-8, body over the trench), photoresistor + 10K divider, power buses on rows 10 (5V) and 15 (GND). Layout: `docs/compact_step1.png`. LCD and RFID reader will sit on the lid, linked with male-female jumpers. Crate must be opaque plastic: a metal can would block both Bluetooth and RFID (Faraday cage).
+
+GY-521 first light: at rest az ≈ 0.93 g instead of 1.00 (factory offset of a low-cost sensor, |a| ≈ 0.93). Harmless for classification; a 6-face calibration could fix it in Week 2.
+
 ## Sensor orientation in the crate
 
 (Day 4: which face of the crate points along +X, +Y, +Z?)
@@ -28,5 +34,8 @@ LCD 1602 working in 4-bit mode, shows the light level and LID: OPEN / CLOSED in 
 ## Problems and fixes
 
 - **LCD backlight on but no text.** VDD (LCD pin 2) was wired to GND instead of 5V, so both power pins of the display logic sat on ground while the backlight, a separate circuit, still lit up. Isolated by forcing the contrast pin (V0) to GND to rule out the potentiometer, then checking the power pins. Fixed by moving VDD to the 5V rail. No damage: two pins on the same ground is not a short circuit.
-- **GY-521 header pins not soldered.** Press-fit pins would disconnect on every shock, which would corrupt drop and tamper data. Soldering required before Day 2.
+- **Recordings were 2.8 s too long (1,779 samples for 15 s).** On macOS, `reset_input_buffer()` did not discard the samples buffered during the 3-2-1 countdown, so calm pre-GO data was being saved under the session label: a silent labelling error that would have poisoned the training set. Caught because the sample count did not match 15 s × 100 Hz. Fixed in `record.py` by draining the backlog after GO and trimming to the last N seconds of the board's own clock. Verified: 1,499 samples for 15 s.
+- **Light stuck near 1000 on the compact core.** The photoresistor legs, folded flat to save space, were touching, so current bypassed the sensor and A0 read 5V whatever the light. Isolated by removing the photoresistor: A0 dropped to 0, which cleared the A0 wire and the 10K resistor. Fixed by mounting the photoresistor upright with straight legs (it now faces the lid, which is the right orientation anyway).
+- **Arduino Serial Plotter unreadable.** It draws every column on one axis, so `t_ms` (100,000+) flattens the motion signals (±1 g). Use `tools/plot.py` instead, which gives each signal its own scale.
+- **"Resource busy" when starting record.py.** The IDE's Serial Monitor tab still held the port. Only one program can use it at a time; `record.py` now prints a clear message instead of a traceback.
 - **macOS blocked Terminal from reading ~/Documents** ("Operation not permitted"). Fixed by granting Terminal access in System Settings › Privacy & Security › Files and Folders.
