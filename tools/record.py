@@ -92,7 +92,15 @@ def main():
 
     port = args.port or find_port()
     print(f"Connecting to {port} ...")
-    with serial.Serial(port, args.baud, timeout=1) as ser:
+    try:
+        ser = serial.Serial(port, args.baud, timeout=1)
+    except serial.SerialException as e:
+        if "busy" in str(e).lower():
+            sys.exit("The port is busy: another program is talking to the Arduino.\n"
+                     "Close the Serial Monitor tab and the Serial Plotter in the Arduino IDE "
+                     "(or quit the IDE with Cmd+Q), then run this command again.")
+        sys.exit(f"Could not open {port}: {e}")
+    with ser:
         wait_for_header(ser)
 
         print(f"\nReady to record '{args.label}' for {args.seconds:.0f} s.")
@@ -102,7 +110,12 @@ def main():
             time.sleep(1)
         print("  GO!\a")
 
-        ser.reset_input_buffer()          # drop samples from the countdown
+        # Drop the samples that piled up during the countdown. reset_input_buffer()
+        # alone is not reliable on macOS, so also read and discard until caught up.
+        ser.reset_input_buffer()
+        drain_deadline = time.time() + 2
+        while ser.in_waiting > 200 and time.time() < drain_deadline:
+            ser.readline()
         rows, bad = [], 0
         start = time.time()
         while time.time() - start < args.seconds:
@@ -123,6 +136,11 @@ def main():
 
     if not rows:
         sys.exit("No samples recorded.")
+
+    # Safety net: keep only the last N seconds measured by the board's own clock,
+    # so no pre-GO sample can end up carrying this label.
+    t_end = rows[-1][0]
+    rows = [r for r in rows if r[0] > t_end - args.seconds * 1000]
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
