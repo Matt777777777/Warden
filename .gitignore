@@ -8,3 +8,6 @@ data/test/
 
 # Arduino IDE build output
 build/
+
+# Inspection reports generated on the laptop
+reports/

@@ -14,10 +14,15 @@ Usage
 
 The iPhone must be on the same Wi-Fi as the Mac. If macOS asks whether Python may
 accept incoming connections, click Allow.
+
+The bridge also lets the phone ask for an inspection report: it reads the crate's log,
+and tools/report.py drafts the report with a local language model (Ollama) on the Mac.
 """
 
 import argparse
+import json
 import queue
+import re
 import socket
 import sys
 import threading
@@ -30,11 +35,18 @@ from serial.tools import list_ports
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_FILE = ROOT / "app" / "index.html"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import report as R  # noqa: E402
 
 clients = []                      # one queue per connected phone
 clients_lock = threading.Lock()
 ser = None
 ser_lock = threading.Lock()
+MODEL = R.DEFAULT_MODEL
+
+dump_lines, dump_done = [], threading.Event()          # the last log dump seen on the wire
+job = {"state": "idle", "stage": "", "words": 0, "error": "", "report": None}
+job_lock = threading.Lock()
 
 
 def find_port():
@@ -81,7 +93,34 @@ def serial_reader():
             continue                                   # 100 Hz sensor lines stay on the Mac
         if line.startswith(("#E", "#L,END", "# ERROR", "# WARNING")):
             print("  crate:", line)
+        if line.startswith("#L,"):
+            if line.startswith("#L,seq"):
+                dump_lines.clear()
+            dump_lines.append(line)
+            if line.startswith("#L,END"):
+                dump_done.set()
         broadcast(line)
+
+
+def run_report():
+    """Background job: fresh log dump from the crate, then the report (can take minutes on a laptop CPU)."""
+    def progress(stage, words):
+        job.update(stage=stage, words=words)
+    try:
+        job.update(stage="reading", words=0)
+        dump_done.clear()
+        with ser_lock:
+            ser.write(b"dump\n")
+        if not dump_done.wait(20):
+            raise RuntimeError("the crate did not send its log")
+        lines = list(dump_lines)
+        print(f"  report: log received ({len(lines) - 2} records), drafting with {MODEL} ...")
+        rep = R.generate(lines, MODEL, progress=progress)
+        print(f"  report: done, {rep['docx']} ({rep['meta']['engine']})")
+        job.update(state="done", report=rep)
+    except Exception as e:                              # report it to the phone instead of dying silently
+        print("  report failed:", e)
+        job.update(state="error", error=str(e))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -108,6 +147,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_text(200, '{"bridge": "warden", "port": "%s"}' % ser.port, "application/json")
         elif self.path == "/events":
             self.stream_events()
+        elif self.path == "/report/status":
+            self.send_text(200, json.dumps({k: job[k] for k in ("state", "stage", "words", "error", "report")}),
+                           "application/json")
+        elif re.fullmatch(r"/reports/[\w.-]+\.docx", self.path):
+            f = R.REPORTS / self.path.split("/")[-1]
+            if not f.exists():
+                self.send_text(404, "not found")
+                return
+            data = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            self.send_header("Content-Disposition", f'attachment; filename="{f.name}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         else:
             self.send_text(404, "not found")
 
@@ -141,6 +195,16 @@ class Handler(BaseHTTPRequestHandler):
             print(f"  phone disconnected ({self.client_address[0]})")
 
     def do_POST(self):
+        if self.path == "/report":
+            with job_lock:
+                if job["state"] == "running":
+                    self.send_text(409, "a report is already being written")
+                    return
+                job.update(state="running", stage="reading", words=0, error="", report=None)
+            threading.Thread(target=run_report, daemon=True).start()
+            print("  phone -> inspection report")
+            self.send_text(200, "started")
+            return
         if self.path != "/cmd":
             self.send_text(404, "not found")
             return
@@ -156,11 +220,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global ser
+    global ser, MODEL
     ap = argparse.ArgumentParser(description="Relay between the WARDEN crate (USB) and the phone app (Wi-Fi).")
     ap.add_argument("--port", help="serial port of the crate (auto-detected if omitted)")
     ap.add_argument("--http", type=int, default=8000, help="web port for the phone (default 8000)")
+    ap.add_argument("--model", default=R.DEFAULT_MODEL, help=f"local model for reports (default {R.DEFAULT_MODEL})")
     args = ap.parse_args()
+    MODEL = args.model
+    ok, why = R.ollama_has(MODEL)
+    print(f"Inspection reports: {'local model ' + MODEL + ' ready' if ok else 'template only, ' + why}")
 
     if not APP_FILE.exists():
         sys.exit(f"App not found at {APP_FILE}")

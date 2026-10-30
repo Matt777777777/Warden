@@ -91,6 +91,28 @@
   .verdict.bad { background: var(--alert-bg); color: var(--alert); }
   .verdict span { color: var(--text); opacity: .8; }
 
+  .report { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .report button { width: 100%; }
+  .rstatus { font: 12px var(--mono); color: var(--muted); margin-top: 10px; }
+  .rstatus .dots::after { content: ""; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75% { content: "..."; } }
+  .rhead { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0 12px; }
+  .rhead div { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; font: 11px var(--mono); color: var(--muted); letter-spacing: .06em; }
+  .rhead b { display: block; font: 700 20px var(--sans); letter-spacing: .03em; margin-top: 2px; }
+  .rhead .HIGH, .rhead .FAILED { color: var(--alert); } .rhead .MEDIUM { color: var(--warn); } .rhead .LOW, .rhead .VERIFIED { color: var(--ok); }
+  .report h3 { font: 600 12px var(--mono); color: var(--muted); letter-spacing: .08em; text-transform: uppercase; margin: 16px 0 6px; }
+  .report p { font-size: 14px; }
+  .report .tag { font-size: 12px; color: var(--faint); font-style: italic; margin-top: 6px; }
+  .inc { padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .inc:last-child { border-bottom: none; }
+  .inc .when { font: 12px var(--mono); color: var(--muted); }
+  .inc .what { font-weight: 600; } .inc.high .what { color: var(--alert); } .inc.medium .what { color: var(--warn); }
+  .inc .facts { font: 12px var(--mono); color: var(--faint); margin: 2px 0 4px; }
+  .report ol { padding-left: 20px; font-size: 14px; }
+  .report ol li { margin: 4px 0; }
+  .report a.dl { display: block; text-align: center; margin-top: 16px; font: 600 14px var(--sans); color: var(--bg); background: var(--accent);
+    border-radius: 11px; padding: 13px 12px; text-decoration: none; }
+
   .hint { color: var(--faint); font-size: 12px; text-align: center; margin-top: 18px; line-height: 1.5; }
   .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
     background: var(--text); color: var(--bg); font-size: 13px; padding: 10px 14px; border-radius: 10px; opacity: 0;
@@ -143,6 +165,11 @@
   <ul class="list" id="logList"></ul>
   <div class="empty" id="logEmpty">Tap “Read &amp; verify log” to download the crate’s black box.</div>
   <button class="link" id="btnTamper" hidden>Demo: tamper with one record, then verify again</button>
+  <div class="report" id="reportBox" hidden>
+    <button id="btnReport">Draft inspection report (local AI)</button>
+    <div class="rstatus" id="reportStatus"></div>
+    <div id="reportView"></div>
+  </div>
 </section>
 
 <p class="hint" id="hint">On iPhone, open this page in the free <b>Bluefy</b> browser (Safari has no Bluetooth access).</p>
@@ -245,6 +272,7 @@ function render() {
   for (const id of ["btnLog", "btnSync"]) $(id).disabled = !linked;
   $("btnExport").disabled = !state.dump;
   $("btnTamper").hidden = !(state.link === "demo" && state.dump);
+  $("reportBox").hidden = !(state.link === "bridge" && state.dump);
   $("hint").hidden = linked || bridgeAvailable;
 
   const ul = $("liveList");
@@ -438,6 +466,58 @@ class DemoCrate {
     }
   }
   stop() { this.timers.forEach(clearInterval); }
+}
+
+/* ---------------- inspection report (drafted on the Mac by a local language model) ---------------- */
+let reportTimer = null;
+const STAGES = { reading: "Reading the crate's log", verifying: "Verifying the hash chain",
+                 writing: "Local AI writing the report", checking: "Checking every time and figure against the log",
+                 document: "Writing the Word document" };
+
+$("btnReport").onclick = async () => {
+  $("reportView").innerHTML = "";
+  $("btnReport").disabled = true;
+  try {
+    const r = await fetch("/report", { method: "POST" });
+    if (!r.ok && r.status !== 409) throw new Error();
+  } catch (e) { $("btnReport").disabled = false; toast("Mac relay not reachable"); return; }
+  const t0 = Date.now();
+  clearInterval(reportTimer);
+  reportTimer = setInterval(async () => {
+    let j;
+    try { j = await (await fetch("/report/status", { cache: "no-store" })).json(); } catch (e) { return; }
+    const secs = Math.round((Date.now() - t0) / 1000);
+    if (j.state === "running") {
+      const words = j.stage === "writing" && j.words ? ` · ${j.words} words` : "";
+      $("reportStatus").innerHTML = `<span class="dots">${esc(STAGES[j.stage] || "Working")}</span>${words} · ${secs} s`;
+      return;
+    }
+    clearInterval(reportTimer);
+    $("btnReport").disabled = false;
+    $("btnReport").textContent = "Draft a new report";
+    if (j.state === "error") { $("reportStatus").textContent = "Report failed: " + j.error; return; }
+    $("reportStatus").textContent = "";
+    showReport(j.report);
+  }, 1000);
+};
+
+function showReport(rep) {
+  const m = rep.meta, ai = m.engine === "llm";
+  const tag = ai ? `Drafted offline by ${m.model} on the Mac in ${m.seconds} s. Every time and figure checked against the log` +
+                   (m.rejected.length ? `: ${m.rejected.length} unsupported sentence(s) removed.` : ", nothing removed.")
+                 : `Template text: ${m.note || "no local model"}.`;
+  const integrity = rep.integrity.ok ? "VERIFIED" : "FAILED";
+  $("reportView").innerHTML =
+    `<div class="rhead"><div>RISK LEVEL<b class="${rep.risk.level}">${rep.risk.level}</b></div>` +
+    `<div>LOG INTEGRITY<b class="${integrity}">${integrity}</b></div></div>` +
+    `<p>${esc(rep.summary)}</p><p class="tag">${esc(tag)}</p>` +
+    (rep.sequences && rep.sequences.length ? `<h3>Linked sequence</h3>` + rep.sequences.map((q) => `<p>${esc(q)}</p>`).join("") : "") +
+    `<h3>Incidents</h3>` + (rep.incidents.length ? rep.incidents.map((x) =>
+      `<div class="inc ${x.severity}"><span class="when">${esc(x.time.slice(5, 16))}</span> <span class="what">${esc(x.label)}</span>` +
+      `<div class="facts">${esc([x.detail, x.context].filter(Boolean).join(" · "))}</div>${esc(x.assessment || "")}</div>`).join("")
+      : `<p>No incident recorded.</p>`) +
+    `<h3>Recommended actions</h3><ol>${rep.recommendations.map((r) => `<li>${esc(r)}</li>`).join("")}</ol>` +
+    `<a class="dl" href="/reports/${encodeURIComponent(rep.docx)}" download>Download Word report (.docx)</a>`;
 }
 
 /* ---------------- actions ---------------- */

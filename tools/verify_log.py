@@ -71,57 +71,69 @@ def read_from_board(port=None, baud=115200, timeout=20):
     sys.exit("No complete log received. Is the WARDEN firmware uploaded?")
 
 
-def verify(lines):
+def check(lines):
+    """Verify the chain of a dump (list of '#L,...' lines). Returns a dict, prints nothing:
+    {"ok": bool, "records": [{"seq", "unix", "dt", "name", "value", "chain", "status", "alert"}],
+     "issues": [str], "alerts": int}"""
     records, end = [], None
     for line in lines:
-        parts = line.split(",")
-        if parts[1] == "seq":
+        parts = line.strip().split(",")
+        if len(parts) < 2 or parts[1] == "seq":
             continue
         if parts[1] == "END":
             end = (int(parts[2]), int(parts[3], 16))
             continue
         seq, unix, dt, name, value, chain = parts[1:7]
-        records.append((int(seq), int(unix), dt, name, int(value), int(chain, 16)))
+        records.append({"seq": int(seq), "unix": int(unix), "dt": dt, "name": name,
+                        "value": int(value), "chain": int(chain, 16)})
 
+    ok, issues = True, []
+    prev = 0xFFFF if records and records[0]["seq"] == 0 else None     # after wrap-around the first link is unknown
+    for i, r in enumerate(records):
+        raw = r["unix"].to_bytes(4, "little") + bytes([EVENT_CODES.get(r["name"], 0), r["value"]])
+        if prev is None:
+            r["status"] = "start"
+        elif crc16(prev, raw) == r["chain"]:
+            r["status"] = "ok"
+        else:
+            r["status"] = "BROKEN"
+            ok = False
+            issues.append(f"record {r['seq']} does not match the chain (edited or forged)")
+        if i > 0 and r["seq"] != records[i - 1]["seq"] + 1:
+            r["status"] += " (gap)"
+            ok = False
+            issues.append(f"records missing between {records[i - 1]['seq']} and {r['seq']}")
+        r["alert"] = r["name"] in ALERTS
+        prev = r["chain"]
+    if records and end is not None:
+        count, last_chain = end
+        if count != records[-1]["seq"] + 1 or last_chain != records[-1]["chain"]:
+            ok = False
+            issues.append("the log header does not match the last record (records removed at the end?)")
+    if not records and end is None:
+        ok = False
+        issues.append("no log received")
+    return {"ok": ok, "records": records, "issues": issues, "alerts": sum(r["alert"] for r in records)}
+
+
+def verify(lines):
+    result = check(lines)
+    records = result["records"]
     if not records:
         print("Log is empty.")
-        return True
-
-    first_seq = records[0][0]
-    prev = 0xFFFF if first_seq == 0 else None            # after wrap-around the first link is unknown
-    ok = True
-    alerts = 0
+        return result["ok"]
     print(f"\n{'seq':>5}  {'date & time (crate clock)':<20}  {'event':<8}  {'value':>5}  check")
-    for i, (seq, unix, dt, name, value, chain) in enumerate(records):
-        code = EVENT_CODES.get(name, 0)
-        raw = unix.to_bytes(4, "little") + bytes([code, value])
-        if prev is None:
-            status = "start"
-        else:
-            expected = crc16(prev, raw)
-            status = "ok" if expected == chain else "BROKEN"
-            if expected != chain:
-                ok = False
-        if i > 0 and seq != records[i - 1][0] + 1:
-            status += " (gap)"
-            ok = False
-        if name in ALERTS:
-            alerts += 1
+    for r in records:
+        name, value = r["name"], r["value"]
         extra = f"{value / 10:.1f}g" if name in ("DROP", "SHOCK") else f"{value}/10 trees" if name == "TAMPER" else str(value)
-        flag = "  <- ALERT" if name in ALERTS else ""
-        print(f"{seq:>5}  {dt:<20}  {name:<8}  {extra:>5}  {status}{flag}")
-        prev = chain
-
-    if end is not None:
-        count, last_chain = end
-        if count != records[-1][0] + 1 or last_chain != records[-1][5]:
-            print("\nHeader does not match the last record (records removed at the end?)")
-            ok = False
-
-    print(f"\n{len(records)} records, {alerts} alert(s).")
-    print("INTEGRITY OK: the chain is unbroken." if ok else
+        flag = "  <- ALERT" if r["alert"] else ""
+        print(f"{r['seq']:>5}  {r['dt']:<20}  {name:<8}  {extra:>5}  {r['status']}{flag}")
+    for issue in result["issues"]:
+        print("  !", issue)
+    print(f"\n{len(records)} records, {result['alerts']} alert(s).")
+    print("INTEGRITY OK: the chain is unbroken." if result["ok"] else
           "INTEGRITY FAILED: the log was modified or damaged.")
-    return ok
+    return result["ok"]
 
 
 def main():

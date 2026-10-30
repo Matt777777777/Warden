@@ -50,6 +50,18 @@ Drops stay with the physical rule (free fall then impact), which already catches
 
 **Limits.** No road-transport data: in a vehicle the model will see vibrations it has never learnt, so this is the next dataset to collect. One crate, one operator, one day of recordings: performance on other crates is not established.
 
+## Inspection report by a local language model
+
+At the end of a shipment the inspector taps *Draft inspection report* in the phone app. The Mac reads the crate's log, re-verifies the hash chain, and a small open-source language model running **offline on the laptop** (Llama 3.2 through [Ollama](https://ollama.com), no cloud, nothing leaves the room) drafts the report in English: summary, what each incident may indicate, recommended actions. The report shows in the app and is saved as a Word document with the full event log and a signature line.
+
+The model is the clerk, not the investigator. Facts, durations and the risk level (LOW, MEDIUM, HIGH) are computed by plain code from the verified log; the model only writes the prose, in a fixed JSON structure. Every time and figure it writes is then checked against the log, and a sentence that cannot be matched (an invented time, a wrong impact force) is removed and listed. Without a model installed, a template is used and the report says so.
+
+```bash
+ollama pull llama3.2:3b                 # once, about 2 GB
+python tools/report.py --demo           # sample shipment, no crate needed
+python tools/report.py                  # the real crate on USB
+```
+
 ## Tamper-evident log
 
 Each record (time, event, value) is stored with a 16-bit *chain* value computed over the previous chain value and the record itself. Editing, deleting or reordering any record breaks every link after it, the way a page torn out of a numbered, glued logbook leaves a gap. The log lives in the 4 KB AT24C32 memory of the clock module and survives power loss; a reboot is itself recorded.
@@ -72,6 +84,7 @@ tools/record.py             record labelled motion sessions for the training dat
 tools/train.py              train the classifier, evaluate it against the rules, export model.h
 tools/check_parity.py       check that the C export votes exactly like scikit-learn
 tools/watch_ai.py           watch the crate's AI decide, live (verdicts and events only)
+tools/report.py             inspection report: verified facts + local language model, Word output
 tools/plot.py               plot a recorded session
 tools/verify_log.py         download the crate's log over USB and verify its integrity
 tools/bridge.py             relay between the crate (USB) and the phone app (Wi-Fi)
@@ -124,7 +137,7 @@ A demo mode simulates a crate, including a forged record, without any hardware.
 - [x] Final enclosure (opaque plastic crate) and labelled dataset collection (90 sessions)
 - [x] On-device classifier (features computed on the fly, random forest exported to C), benchmarked against the rules
 - [ ] Road-transport dataset (vehicle vibrations)
-- [ ] Incident report written by a local language model on the inspector's laptop, from the verified log
+- [x] Inspection report drafted by a local language model on the inspector's laptop, fact-checked against the verified log
 - [ ] Bluetooth LE link (HM-10) and battery operation
 - [ ] Keyed MAC instead of CRC for the log chain
 
