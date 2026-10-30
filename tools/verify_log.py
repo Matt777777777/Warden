@@ -22,7 +22,7 @@ import sys
 import time
 from datetime import datetime, timezone
 
-ALERTS = {"OPEN !!", "DROP", "SHOCK", "FLIPPED", "BADGE ?"}
+ALERTS = {"OPEN !!", "DROP", "SHOCK", "FLIPPED", "BADGE ?", "TAMPER"}
 
 
 def crc16(crc, data):
@@ -34,7 +34,8 @@ def crc16(crc, data):
 
 
 EVENT_CODES = {"BOOT": 1, "OPEN OK": 2, "OPEN !!": 3, "CLOSED": 4, "DROP": 5, "SHOCK": 6,
-               "FLIPPED": 7, "UPRIGHT": 8, "AUTH": 9, "INSPECT": 10, "BADGE ?": 11, "CLEARED": 12}
+               "FLIPPED": 7, "UPRIGHT": 8, "AUTH": 9, "INSPECT": 10, "BADGE ?": 11, "CLEARED": 12,
+               "TAMPER": 13}
 
 
 def read_from_board(port=None, baud=115200, timeout=20):
@@ -106,7 +107,7 @@ def verify(lines):
             ok = False
         if name in ALERTS:
             alerts += 1
-        extra = f"{value / 10:.1f}g" if name in ("DROP", "SHOCK") else str(value)
+        extra = f"{value / 10:.1f}g" if name in ("DROP", "SHOCK") else f"{value}/10 trees" if name == "TAMPER" else str(value)
         flag = "  <- ALERT" if name in ALERTS else ""
         print(f"{seq:>5}  {dt:<20}  {name:<8}  {extra:>5}  {status}{flag}")
         prev = chain

@@ -172,13 +172,14 @@ const EVENTS = {                       // firmware code -> [code, readable label
   "OPEN !!": [3,  "Lid opened without badge", true],
   "CLOSED":  [4,  "Lid closed", false],
   "DROP":    [5,  "Drop", true],
-  "SHOCK":   [6,  "Shock", true],
+  "SHOCK":   [6,  "Shock (firmware v0.3)", true],
   "FLIPPED": [7,  "Turned upside down", true],
   "UPRIGHT": [8,  "Back upright", false],
   "AUTH":    [9,  "Authorised badge", false],
   "INSPECT": [10, "Inspector badge", false],
   "BADGE ?": [11, "Unknown badge", true],
   "CLEARED": [12, "Log cleared", false],
+  "TAMPER":  [13, "Forced entry (on-device AI)", true],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -311,7 +312,8 @@ function finishDump(rows, count, lastChain) {
     if (def[2]) alerts++;
     prev = r.chain;
     return { ...r, label: def[1], alert: def[2], status,
-             extra: (r.name === "DROP" || r.name === "SHOCK") ? (r.value / 10).toFixed(1) + " g" : "" };
+             extra: (r.name === "DROP" || r.name === "SHOCK") ? (r.value / 10).toFixed(1) + " g"
+                  : r.name === "TAMPER" ? r.value + "/10 trees" : "" };
   });
   if (rows.length && (count !== rows[rows.length - 1].seq + 1 || lastChain !== rows[rows.length - 1].chain)) {
     ok = false; if (firstBroken === null) firstBroken = count - 1;
@@ -393,7 +395,7 @@ class DemoCrate {
     this.log = []; this.chain = 0xffff; this.alerts = 0; this.lid = false; this.authUntil = 0;
     this.offset = 0;
     [[0, "BOOT", 0], [620, "AUTH", 0], [628, "OPEN OK", 188], [910, "CLOSED", 9],
-     [5400, "DROP", 34], [9000, "SHOCK", 41], [12100, "OPEN !!", 181], [12300, "CLOSED", 11]]
+     [5400, "DROP", 34], [9000, "TAMPER", 9], [12100, "OPEN !!", 181], [12300, "CLOSED", 11]]
       .forEach(([dt, n, v]) => this.add(base + dt, n, v, false));
     this.timers = [setInterval(() => this.status(), 2000), setInterval(() => this.randomEvent(), 7000)];
     setTimeout(() => this.status(), 300);
@@ -414,7 +416,7 @@ class DemoCrate {
     handleLine(`#S,${this.alerts},${this.lid ? 1 : 0},${left},${this.now()}`);
   }
   randomEvent() {
-    const script = [["AUTH", 0], ["OPEN OK", 190], ["CLOSED", 8], ["SHOCK", 33], ["INSPECT", 0], ["DROP", 27]];
+    const script = [["AUTH", 0], ["OPEN OK", 190], ["CLOSED", 8], ["TAMPER", 10], ["INSPECT", 0], ["DROP", 27]];
     const [name, v] = script[(this.step = ((this.step ?? -1) + 1) % script.length)];
     if (name === "AUTH") this.authUntil = Date.now() + 30000;
     if (name === "OPEN OK") { this.lid = true; this.authUntil = 0; }

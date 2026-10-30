@@ -43,6 +43,28 @@ Two transports, one protocol (`#S` status every 2 s, `#E` events, `#L` log dump)
 - Mac relay (`tools/bridge.py`): the crate stays on USB, the Mac relays its messages to the phone over Wi-Fi with Server-Sent Events. Works in Safari. The relay only forwards `dump` and `time`: the log cannot be erased from the phone.
 iOS does not let web pages or ordinary apps talk to a USB serial device, hence the relay.
 
+## Dataset collection (30 Oct 2026)
+
+90 sessions of 20 s recorded in the final opaque crate with `tools/record.py`, 15 per class: still, open, carry, flip, drop, tamper. Vehicle sessions were left out on purpose (no safe way to record them that day); this is documented as a limit rather than faked with shaking by hand. One drop session with 18 gaps after a 13 g impact was discarded (loose sensor wire, re-seated).
+
+## On-device machine learning (30 Oct 2026)
+
+Pipeline in `tools/train.py`. Key decisions:
+- **One feature code base.** `firmware/warden/features.c` is compiled into the firmware and loaded in Python through ctypes. Training and inference cannot drift apart.
+- **Two staggered windows** of 1 s (running sums only, ~60 bytes each) give a verdict every 0.5 s without storing samples.
+- **Label cleaning.** A session label says what happened at some point in 20 s, not in every second. Calm windows are relabelled "still"; in drop sessions, active windows with no free fall and no impact (lifting the crate before letting go) are excluded. Open, carry and flip are grouped as "handling".
+- **Evaluation grouped by session** (no window of a test session is ever seen in training), and at alert level against the v0.3 rules replayed on the same raw data.
+- **Hybrid design.** Drops stay with the physical rule (100 % detected), flips with the orientation rule; the model only judges forced entry vs handling. Tamper alerts are muted while the lid is open: an authorised opening gesture looks a lot like forcing, and the badge rule already judges openings (open-session false alarms 20 % → 0 %).
+- Tried and dropped: extra features (`jerk_max`, `sharp_frac`) gave no real gain but are cheap so they stayed; a 3-window majority vote smoothed out short events and hurt.
+
+Result: forced entry 100 % detected vs 47 % for the SHOCK rule, false alarms on carrying 13 % vs 47 %, 0 % on the other classes.
+
+**Export and parity.** The forest is written as flat arrays in flash. Thresholds are rounded *down* to float32 so that `x <= T` on the crate gives the same answer as scikit-learn's double-precision comparison. Checked on every window of the dataset (3,510) on the laptop, then on a simulated ATmega328P (simavr, 180 windows from 12 sessions), whose software floating point could in principle differ: identical votes everywhere.
+
+## Firmware v0.4, on-device AI (30 Oct 2026)
+
+TAMPER event (code 13) raised by the model; the SHOCK rule is retired (code 6 kept so older logs still decode). Live verdict line `#M` every 0.5 s. I2C timeout and sensor recovery ported from `imu_stream` v0.2. Measured: 28.1 KB of flash (87 % of the 32 KB available to sketches, +8.5 KB vs v0.3), 886 bytes of static RAM (+146), 0.62 ms per sample to update the features and 1.2 ms per inference, inside the 10 ms sampling period.
+
 ## Problems found and how they were fixed
 
 - **LCD backlight on but no text.** VDD (LCD pin 2) was wired to GND instead of 5V, so both power pins of the display logic sat on ground while the backlight, a separate circuit, still lit up. Isolated by forcing the contrast pin (V0) to GND to rule out the potentiometer, then checking the power pins. Fixed by moving VDD to the 5V rail. No damage: two pins on the same ground is not a short circuit.
@@ -52,4 +74,7 @@ iOS does not let web pages or ordinary apps talk to a USB serial device, hence t
 - **Compile error "DateTime does not name a type".** The IDE inserts function prototypes above the first function; a struct used in prototypes must be declared before any function.
 - **Arduino Serial Plotter unreadable.** It draws every column on one axis, so `t_ms` (100,000+) flattens the motion signals (±1 g). Use `tools/plot.py` instead, which gives each signal its own scale.
 - **"Resource busy" when starting record.py.** The IDE's Serial Monitor tab still held the port. Only one program can use it at a time; `record.py` now prints a clear message instead of a traceback.
+- **Clock module wobbling blocked the I2C bus.** During drop sessions the DS3231 board, held only by its pins, moved enough to flicker its power LED, and the whole bus froze ("No data header received"). Removed for the collection; it goes back in held by hot glue or tape.
+- **Sensor freezes after hard impacts, even without the clock.** The Arduino Wire library waits forever for a device that stops answering. Fixed with `Wire.setWireTimeout(3000, true)`, a re-initialisation after 5 failed reads, and a once-per-second check of the sensor's sleep bit (a power glitch restarts it asleep). `record.py` now warns live when data stops and flags sessions with gaps.
+- **Generated model did not compile as C.** The exporter wrote zero thresholds as `0f`, which is not a valid C literal. Caught by compiling `model.h` in the parity harness with `-Wall -Werror` before it reached the board; now written as `0.0f`.
 - **macOS blocked Terminal from reading ~/Documents** ("Operation not permitted"). Fixed by granting Terminal access in System Settings › Privacy & Security › Files and Folders.

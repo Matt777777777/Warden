@@ -22,15 +22,33 @@ Countries supplying military equipment to partners are expected to verify where 
 | Layer | Function | How |
 |-------|----------|-----|
 | **Sense** | Motion and lid state | MPU-6050 accelerometer + gyroscope at 100 Hz, photoresistor inside the lid |
-| **Think** | Recognise what is happening | Rule-based detection today (drop, shock, flip); on-device machine learning in progress |
+| **Think** | Recognise what is happening | Physical rules for drops and flips; a random forest running on the UNO itself for forced entry |
 | **Prove** | Who, when, authorised or not | RFID badges, real-time clock, hash-chained event log in non-volatile memory |
 | **Report** | Tell a human | 16×2 LCD on the crate, phone app over Wi-Fi relay or Bluetooth LE |
 
 ![Architecture](docs/media/architecture.png)
 
-**Events recorded:** power on, authorised badge, inspector badge, unknown badge, lid opened with or without authorisation, lid closed, drop (with impact force), shock, flipped, upright, log cleared.
+**Events recorded:** power on, authorised badge, inspector badge, unknown badge, lid opened with or without authorisation, lid closed, drop (with impact force), forced entry (with the model's confidence), flipped, upright, log cleared.
 
 **Authorisation model:** the authorised badge allows exactly one lid opening within 30 seconds. Any other opening is logged as an alert. The inspector badge scrolls the most recent events on the crate's screen.
+
+## On-device machine learning
+
+Telling someone forcing a crate apart from someone carrying it is not something a threshold can do: both shake the box, both produce hits above 3 g. WARDEN learns the difference from data and makes the call on the UNO itself, with no network.
+
+**Data.** 90 labelled sessions of 20 s recorded in the final crate (still, carry, open, flip, drop, tamper; 15 each), 3,510 one-second windows. **Features.** 17 statistics of acceleration and rotation computed on the fly from running sums (`firmware/warden/features.c`), so a window costs about 60 bytes of RAM, never a buffer of raw samples. The *same C file* is compiled into the training pipeline, so the model learns on exactly the numbers the crate computes. **Model.** A 10-tree random forest (536 nodes) exported to C arrays in flash (`model.h`, about 5 KB), giving a verdict every 0.5 s in 1.2 ms.
+
+**Results** (5-fold cross-validation grouped by session: the model is always tested on sessions it never saw):
+
+| Session type | v0.3 rule "SHOCK > 3 g" | v0.4 model + lid sensor |
+|---|---|---|
+| Forced entry (tamper) | 47 % detected | **100 % detected** |
+| Normal carrying | 47 % false alarms | 13 % false alarms |
+| Authorised opening, flip, drop, still | 0 to 20 % false alarms | 0 % false alarms |
+
+Drops stay with the physical rule (free fall then impact), which already catches 100 % of them; flips stay with the orientation rule. The model only does what rules could not. A forced-entry alert needs 8 of the 10 trees to agree in 3 of the last 4 windows, and is ignored while the light sensor sees the lid open (openings are judged by the badge rule). The C export is checked against scikit-learn on every window of the dataset, on the laptop and on a simulated ATmega328P: identical votes ([tools/parity](tools/parity/README.md)). Full report: **[docs/ml/report.md](docs/ml/report.md)**.
+
+**Limits.** No road-transport data: in a vehicle the model will see vibrations it has never learnt, so this is the next dataset to collect. One crate, one operator, one day of recordings: performance on other crates is not established.
 
 ## Tamper-evident log
 
@@ -47,15 +65,19 @@ Arduino UNO R3, prototype shield with a 170-point mini breadboard, GY-521 (MPU-6
 ## Repository layout
 
 ```
-firmware/warden/            main firmware (v0.3)
+firmware/warden/            main firmware (v0.4): warden.ino, features.c (shared with training), model.h (generated)
 firmware/diagnostics/       one-purpose test sketches: I2C scan, motion stream, LCD, RFID
 app/index.html              phone inspector app (single file, no dependencies)
 tools/record.py             record labelled motion sessions for the training dataset
+tools/train.py              train the classifier, evaluate it against the rules, export model.h
+tools/check_parity.py       check that the C export votes exactly like scikit-learn
+tools/watch_ai.py           watch the crate's AI decide, live (verdicts and events only)
 tools/plot.py               plot a recorded session
 tools/verify_log.py         download the crate's log over USB and verify its integrity
 tools/bridge.py             relay between the crate (USB) and the phone app (Wi-Fi)
 docs/hardware.md            bill of materials, pin map, wiring
 docs/engineering-log.md     dated build log: measurements, decisions, bugs and fixes
+docs/ml/                    training report and confusion matrix
 data/raw/                   training dataset (labelled CSV sessions)
 ```
 
@@ -71,6 +93,8 @@ pip install -r requirements.txt
 python tools/verify_log.py                      # read and verify the crate's log
 python tools/record.py --label drop --seconds 20
 python tools/plot.py --latest
+python tools/train.py                           # retrain and regenerate firmware/warden/model.h
+python tools/check_parity.py
 ```
 
 **Phone app.** Two ways to reach the crate, same app and protocol:
@@ -87,6 +111,7 @@ A demo mode simulates a crate, including a forged record, without any hardware.
 | crate → host | `t_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,light` | 100 Hz sensor stream |
 | crate → host | `#S,<alerts>,<lid>,<auth s>,<unix>` | status, every 2 s |
 | crate → host | `#E <date> <time> <EVENT> [<g>] [ALERT]` | live event |
+| crate → host | `#M,<class>,<votes still>,<handling>,<drop>,<tamper>,<lid>,<µs>` | model verdict, every 0.5 s (class 0 still, 1 handling, 2 drop, 3 tamper) |
 | crate → host | `#L,<seq>,<unix>,<datetime>,<event>,<value>,<chain>` | log dump, ends with `#L,END,<count>,<chain>` |
 | host → crate | `dump` · `time YYYY-MM-DD HH:MM:SS` · `clear` | commands (`clear` is not relayed to the phone) |
 
@@ -96,8 +121,10 @@ A demo mode simulates a crate, including a forged record, without any hardware.
 - [x] Compact solder-free build: clock, RFID, LCD, shared I2C bus
 - [x] Rule-based detection, badge authorisation, hash-chained log, integrity verifier
 - [x] Phone inspector app with Wi-Fi relay and demo mode
-- [ ] Final enclosure (opaque plastic crate) and labelled dataset collection
-- [ ] On-device classifier (features computed on the fly, small decision tree exported to C), benchmarked against the rules
+- [x] Final enclosure (opaque plastic crate) and labelled dataset collection (90 sessions)
+- [x] On-device classifier (features computed on the fly, random forest exported to C), benchmarked against the rules
+- [ ] Road-transport dataset (vehicle vibrations)
+- [ ] Incident report written by a local language model on the inspector's laptop, from the verified log
 - [ ] Bluetooth LE link (HM-10) and battery operation
 - [ ] Keyed MAC instead of CRC for the log chain
 
